@@ -1,0 +1,88 @@
+name: FPL Edge brief
+
+on:
+  schedule:
+    # 07:00 UTC every Friday (08:00 UK in summer, 07:00 in winter).
+    # Gameweek deadlines are normally Friday or Saturday at 18:30 UK time,
+    # so this lands well before the deadline with room to act.
+    - cron: "0 7 * * 5"
+  workflow_dispatch:
+    inputs:
+      no_stats:
+        description: "Skip FBref/Understat (faster, FPL API only)"
+        type: boolean
+        default: false
+      send_email:
+        description: "Email the brief"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fpl-edge
+  cancel-in-progress: false
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Keeps FBref scraping light and survives their rate limiting: yesterday's
+      # cached stats are better than no stats.
+      - name: Restore data cache
+        uses: actions/cache@v4
+        with:
+          path: .fplcache
+          key: fplcache-${{ github.run_id }}
+          restore-keys: fplcache-
+
+      - name: Self-test the pipeline
+        run: python test_fpl_edge.py
+
+      - name: Build the gameweek brief
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SMTP_TO: ${{ secrets.SMTP_TO }}
+        run: |
+          ARGS=""
+          if [ "${{ inputs.no_stats }}" = "true" ]; then ARGS="$ARGS --no-stats"; fi
+          if [ "${{ inputs.send_email }}" = "true" ]; then ARGS="$ARGS --email"; fi
+          python run_fpl_edge.py $ARGS
+
+      - name: Upload the brief as an artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fpl-edge-brief
+          path: |
+            fpl_edge_brief.html
+            fpl_edge_squad.json
+          retention-days: 30
+
+      # Commits the brief back to the repo so GitHub Pages can serve it at a
+      # stable URL you can open on your phone.
+      - name: Publish the brief to the repo
+        run: |
+          git config user.name "fpl-edge-bot"
+          git config user.email "fpl-edge-bot@users.noreply.github.com"
+          git add fpl_edge_brief.html fpl_edge_squad.json
+          git diff --staged --quiet || git commit -m "FPL Edge brief $(date -u +%Y-%m-%d)"
+          git push
