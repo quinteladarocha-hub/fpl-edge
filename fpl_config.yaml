@@ -1,0 +1,131 @@
+# FPL Edge configuration
+# Every tunable lives here. Nothing numeric should be hard-coded in the modules.
+
+season:
+  # soccerdata season codes. "2627" = 2026/27, "2526" = 2025/26.
+  current: "2627"
+  prior: "2526"
+
+rules:
+  # Verified against the official 2026/27 rules (Premier League, 20 July 2026).
+  budget: 100.0            # first-squad budget in millions
+  squad_size: 15
+  squad_by_position: {GK: 2, DEF: 5, MID: 5, FWD: 3}
+  xi_size: 11
+  # Legal starting XI ranges. FPL allows 3-5 DEF, 2-5 MID, 1-3 FWD, exactly 1 GK.
+  xi_min: {GK: 1, DEF: 3, MID: 2, FWD: 1}
+  xi_max: {GK: 1, DEF: 5, MID: 5, FWD: 3}
+  max_per_club: 3
+  free_transfer_cap: 5     # rolls to five, unchanged for 2026/27
+  hit_cost: 4
+
+horizon:
+  # How many gameweeks ahead the xP score looks.
+  gameweeks: 5
+  # Geometric decay applied to each future gameweek. 1.0 = weight all equally.
+  # 0.85 means GW+4 counts ~52% of GW+0. Keeps the squad honest about the near term.
+  decay: 0.85
+
+optimiser:
+  # Weight on bench players' xP in the objective.
+  # 0.0 buys pure 4.0m junk with zero cover; 1.0 wastes budget on a bench that
+  # never scores. 0.10 buys a bit of insurance without distorting the XI.
+  bench_weight: 0.10
+  # Bench GK is weighted separately - you almost never want to pay for one.
+  bench_gk_weight: 0.02
+  # Drop players below this expected-minutes-per-match figure from the universe
+  # entirely. A hard ban on STARTING such players is deliberately not used: it
+  # lets the solver seat a higher-xP player on the bench behind a lower-xP one,
+  # which is never right. Expected minutes already scale xP, so filtering the
+  # universe once is enough.
+  min_expected_minutes_for_squad: 20
+  solver_time_limit_seconds: 120
+
+availability:
+  # FPL status codes: a=available, d=doubtful, i=injured, s=suspended,
+  # u=unavailable, n=not in squad.
+  excluded_statuses: ["i", "s", "u", "n"]
+  # Multiplier applied to expected minutes when chance_of_playing is reported.
+  # Keys are the FPL percentage buckets.
+  chance_multiplier: {0: 0.0, 25: 0.25, 50: 0.50, 75: 0.80, 100: 1.0}
+  # 'd' (doubtful) with no percentage given.
+  doubtful_default: 0.65
+
+minutes:
+  # PHASE 1 PLACEHOLDER. A crude starter probability. Phase 2 replaces this
+  # module wholesale with a per-gameweek rotation model.
+  # Prior-season minutes per appearance is the main driver.
+  # Goalkeepers are binary: they play 90 or they play 0. Modelling them with
+  # a minutes-per-appearance average makes a rotating keeper look like a
+  # part-time starter, which is not how the position works.
+  gk_full_season_minutes: 3420     # 38 x 90
+  nailed_threshold_minutes: 2200   # prior-season minutes implying a nailed starter
+  fringe_threshold_minutes: 900
+  nailed_minutes: 85
+  fringe_minutes: 55
+  bench_minutes: 15
+  # New signings / promoted players with no prior-season PL minutes.
+  unknown_minutes_by_price:
+    # price in millions -> assumed minutes per match
+    9.0: 80
+    7.0: 70
+    5.5: 55
+    4.5: 30
+    0.0: 15
+
+scoring:
+  # Official FPL points, 2026/27.
+  goal: {GK: 10, DEF: 6, MID: 5, FWD: 4}
+  assist: 3
+  clean_sheet: {GK: 4, DEF: 4, MID: 1, FWD: 0}
+  saves_per_point: 3
+  conceded_penalty_per_two: 1     # -1 per 2 goals conceded, GK and DEF only
+  appearance_60plus: 2
+  appearance_under60: 1
+  defcon_points: 2
+  # Defensive contribution thresholds (unchanged for 2026/27).
+  defcon_threshold: {DEF: 10, MID: 12, FWD: 12}
+
+fixtures:
+  # FDR (1 easy .. 5 hard) mapped to an attacking output multiplier.
+  attack_multiplier: {1: 1.30, 2: 1.15, 3: 1.00, 4: 0.87, 5: 0.74}
+  # And to a clean-sheet probability multiplier. Defence is more fixture-sensitive.
+  defence_multiplier: {1: 1.45, 2: 1.20, 3: 1.00, 4: 0.80, 5: 0.62}
+  # Small extra home tilt on top of FDR (FDR already partly encodes venue).
+  home_advantage: 1.03
+  # Baseline clean-sheet probability at FDR 3, before team strength is applied.
+  base_clean_sheet_prob: 0.28
+
+prior:
+  # Empirical-Bayes shrinkage: weight on current-season data is
+  #   w = current_minutes / (current_minutes + k)
+  # k = 450 means a player needs ~5 full matches before current-season rates
+  # carry half the weight. At GW1 this is 0, so the model runs entirely on
+  # prior-season underlying stats. This is what makes a GW1 run possible.
+  shrinkage_k_minutes: 450
+  # How many players get an element-summary API call for prior-season history.
+  max_lookups: 420
+
+ensemble:
+  # Phase 1 has two live sources. Weights renormalise over whatever is present,
+  # so a failed FBref scrape degrades gracefully rather than crashing the run.
+  weights:
+    own_model: 0.75      # xG/xA/defcon-driven points model (signals 1 + 2)
+    fpl_ep_next: 0.25    # FPL's own ep_next, a cheap independent sanity anchor
+  # Phase 2 adds: minutes_model, crowd_signal
+  # Phase 3 adds: transfer planner (not a signal)
+
+output:
+  html_path: "fpl_edge_brief.html"
+  json_path: "fpl_edge_squad.json"
+  differential_ownership_ceiling: 8.0
+  shortlist_size: 8
+
+api:
+  base: "https://fantasy.premierleague.com/api"
+  entry_id: 7285664
+  cache_dir: ".fplcache"
+  cache_hours: 6
+  request_delay_seconds: 0.25
+  timeout_seconds: 20
+  retries: 3

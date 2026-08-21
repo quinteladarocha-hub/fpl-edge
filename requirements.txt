@@ -1,0 +1,9 @@
+# All free and open source. No paid services, no API keys.
+requests>=2.31
+pandas>=2.1
+PyYAML>=6.0
+PuLP>=2.8
+pyarrow>=14.0
+soccerdata>=1.8
+lxml>=5.0
+html5lib>=1.1
